@@ -110,9 +110,22 @@ def get_index(name, verbose = False):
 
 def get_orbits(ast_dir, max_idx = 500):
     """
+    Gets a list of orbital interpolation objects for specified asteroids
 
     This is not the ideal way to do this. I'd prefer to make an x-array of times and a y-array of [ra, dec, r, ang] and call interp on that, the issue is that the asteroids are not all sampled with the same ammount of points, so that the x and y arrays end up ragged, and numpy doesn't like interpolating that. There may be a work around. For now just returning a list of interp obejcts
 
+    Parameters
+    ----------
+    ast_dir: str
+        string of directory containing asteroid ephemerides to check #TODO probably a better way to specify which asteroids to check, we only need to look at bright ones
+    max_idx: int
+        maximum ACT interal asteroid index to consider. Roughly corresponds to 150GHz flux
+
+    Returns
+    -------
+    orbits: list(scipy.interpolate.interp1d)
+        list of orbital interpolations for the asteroids specified by ast_dir
+ 
     """
     orbits = []
     
