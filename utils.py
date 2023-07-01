@@ -166,12 +166,12 @@ def check_loc_ast(ra, dec, time, ast_dir, tol = 2*utils.arcmin, max_idx = 500):
 
     Parameters
     ----------
-    ra: float
-        ra of interest in radians
-    dec: float
-        dec of interest in radians
-    time: float
-        time of interest in unix time
+    ra: np.array(float)
+        rais of interest in radians
+    dec: np.array(float)
+        decs of interest in radians
+    time: np.array(float)
+        times of interest in unix time
     ast_dir: str
         string of directory containing asteroid ephemerides to check #TODO probably a better way to specify which asteroids to check, we only need to look at bright ones
     tol: float
@@ -184,13 +184,17 @@ def check_loc_ast(ra, dec, time, ast_dir, tol = 2*utils.arcmin, max_idx = 500):
     near_ast: bool
         True if there is an asteroid within tol at time, else false #TODO may want to include more detailed info here, i.e. ast by ast breakdown
     """
-
+    assert len(ra) == len(dec) and len(dec) == len(time)
     ast_orbits = get_orbits(ast_dir, max_idx = max_idx)
-    ast_locs = np.zeros((len(ast_orbits), 4)) #an individual interp returns [ra, dec, r, ang] so second dim is 4 
-    for i, orbit in enumerate(ast_orbits):
-        ast_locs[i] = orbit(time)
-    near_ast = np.any(np.array([(np.sqrt((ra-ast_locs[...,0])**2 + (dec-ast_locs[...,1]**2))<tol)]))
-
-    return near_ast 
+    ast_locs = np.zeros((len(ra),len(ast_orbits), 4)) #an individual interp returns [ra, dec, r, ang] so second dim is 4 
+    for i in range(len(ra)):
+        for j, orbit in enumerate(ast_orbits):
+            ast_locs[i][j] = orbit(time[i])
+    near_ast = np.zeros((len(ra), len(ast_orbits)), dtype=bool)
+    for i in range(len(ra)):
+        near_ast[i] = np.array([(np.sqrt((ra[i]-ast_locs[i,...,0])**2 + 
+                                         (dec[i]-ast_locs[i,...,1]**2))<tol)]) 
+    
+    return np.any(near_ast) 
 
     
