@@ -129,12 +129,12 @@ def get_orbits(ast_dir, max_idx = 500):
     """
     orbits = []
     
-    for asteroid in os.listdir(ast_dir):
+    for asteroid in os.listdir(ast_dir):        
         if get_index(asteroid.strip('.npy')) > max_idx: continue #If the index of the asteroid is greater than the specified max index, continue since the asteroid is too faint to matter
-
+        
         info = np.load(ast_dir + asteroid).view(np.recarray)
         orbit = interpolate.interp1d(info.ctime, 
-            [utils.unwind(info.ra*utils.degree), info.dec*utils.degree, info.r, info.ang*utils.arcsec],
+            [utils.unwind(info.ra*utils.degree), info.dec*utils.degree],
             kind=3)
         orbits.append(orbit)
 
@@ -184,16 +184,19 @@ def check_loc_ast(ra, dec, time, ast_dir, tol = 2*utils.arcmin, max_idx = 500):
     near_ast: bool
         True if there is an asteroid within tol at time, else false #TODO may want to include more detailed info here, i.e. ast by ast breakdown
     """
+    
     assert len(ra) == len(dec) and len(dec) == len(time)
-    ast_orbits = get_orbits(ast_dir, max_idx = max_idx)
-    ast_locs = np.zeros((len(ra),len(ast_orbits), 4)) #an individual interp returns [ra, dec, r, ang] so second dim is 4 
+    ast_orbits = get_orbits(ast_dir, max_idx = max_idx) 
+    ast_locs = np.zeros((len(ra),len(ast_orbits), 2)) #an individual interp returns [ra, dec] so last dim is 2 
     for i in range(len(ra)):
         for j, orbit in enumerate(ast_orbits):
-            ast_locs[i][j] = orbit(time[i])
+            ast_locs[i][j] = utils.rewind(orbit(time[i])[1::-1])
+ 
+ 
     near_ast = np.zeros((len(ra), len(ast_orbits)), dtype=bool)
-    for i in range(len(ra)):
+    for i in range(len(ra)):   
         near_ast[i] = np.array([(np.sqrt((ra[i]-ast_locs[i,...,0])**2 + 
-                                         (dec[i]-ast_locs[i,...,1]**2))<tol)]) 
+                                         (dec[i]-ast_locs[i,...,1])**2)<tol)]) 
     
     return np.any(near_ast) 
 
