@@ -160,7 +160,7 @@ def check_map_ast(infofile, ast_dir):
         info = np.load(ast_dir + asteroid)
         orbit = interpolate.interp1d(info.ctime, [utils.unwind(info.ra*utils.degree), info.dec*utils.degree, info.r, info.ang*utils.arcsec], kind=3) 
             
-def check_loc_ast(ra, dec, time, ast_dir, tol = 2*utils.arcmin, max_idx = 500):
+def check_loc_ast(ra, dec, time, ast_dir, tol = 2*utils.arcmin, max_idx = 500, full_out=False):
     """
     Checks a specific location to see if there is an asteroid within tol at the specified time
 
@@ -191,13 +191,15 @@ def check_loc_ast(ra, dec, time, ast_dir, tol = 2*utils.arcmin, max_idx = 500):
     for i in range(len(ra)):
         for j, orbit in enumerate(ast_orbits):
             ast_locs[i][j] = utils.rewind(orbit(time[i])[1::-1])
- 
- 
+
     near_ast = np.zeros((len(ra), len(ast_orbits)), dtype=bool)
     for i in range(len(ra)):   
-        near_ast[i] = np.array([(np.sqrt((ra[i]-ast_locs[i,...,0])**2 + 
-                                         (dec[i]-ast_locs[i,...,1])**2)<tol)]) 
+        near_ast[i] = np.array([(np.sqrt((ra[i]-ast_locs[i,...,1])**2 + 
+                                         (dec[i]-ast_locs[i,...,0])**2)<tol)]) 
     
-    return np.any(near_ast) 
+    if full_out:
+        return near_ast
+    else:
+        return np.any(near_ast, axis=1) 
 
     
