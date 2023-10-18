@@ -324,7 +324,7 @@ class minorplanet():
         #plt.show()
         plt.close()
         
-    def make_stack(self, pa, freq = 'f150', pol='T', restrict_time = False, weight_type=None, plot = False, verbose = False, movie = False, weight_debug = False, time_debug = True, time = 'night', lightcurve=False, freq_adjust = None, extern_calib = None, time_cut = None):
+    def make_stack(self, pa, freq = 'f150', pol='T', restrict_time = False, weight_type=None, plot = False, verbose = False, weight_debug = False, time_debug = True, time = 'night', lightcurve=False, freq_adjust = None, extern_calib = None, time_cut = None):
         pol_dict = {'T':0, 'Q':1, 'U':2}
         pol = pol_dict[pol]
 
@@ -338,12 +338,7 @@ class minorplanet():
         kappa_un = 0
         
         rho_weight = 0
-        kappa_weight = 0
-
-        if movie:
-            stamps = []
-            ctimes = []
-        
+        kappa_weight = 0 
  
         if verbose or weight_debug: 
             hours = [] 
@@ -481,10 +476,6 @@ class minorplanet():
             rho_weight += weight
             kappa_weight += weight**2  
 
-            if movie:
-                stamps.append(rho[pol,:,:]*weight/(kappa[pol,:,:]*weight**2))
-                ctimes.append(ctime0)
-
             if plot and verbose:
                 flux_map = (rho[pol,:,:]/weight) /  (kappa[pol,:,:]/weight**2)
              
@@ -570,24 +561,6 @@ class minorplanet():
             plt.title('Hours of Observation for {}'.format(pa))
             plt.savefig('./plots/hour_hist_{}.pdf'.format(pa))
             plt.show()
-
-        if movie:
-            #sort stamps by ctime
-            flags = np.argsort(np.array(ctimes))
-            stamps = np.array(stamps)[flags]
-            
-            stamp_max = np.amax(stamps)
-            stamp_min = np.amin(stamps)
-
-            for i, stamp in enumerate(stamps):
-                plt.scatter(40,40, marker = '+', color = 'r')
-                plt.imshow(stamp, vmin = stamp_min, vmax = stamp_max)
-                plt.colorbar()
-                path = '/scratch/r/rbond/jorlo/actxminorplanets/sigurd/movies/stamps/{}/'.format(self.name)
-                if not os.path.exists(path):
-                    os.makedirs(path)
-                plt.savefig(path + '{}_{}_{}_{}_{}.png'.format(self.name, time, pa, freq, str(i).zfill(3)))
-                plt.close()
          
         self.map_dict[time][pa][freq]['flux'] = stack * adjust
         self.map_dict[time][pa][freq]['snr'] = rho_stack/np.sqrt(kappa_stack)         
@@ -609,7 +582,7 @@ class minorplanet():
             with open('/scratch/r/rbond/jorlo/actxminorplanets/sigurd/lightcurves/{}_lc_{}_{}_{}.pk'.format(self.name, time, pa, freq), 'wb') as f:
                 pk.dump(lc_dict, f)
 
-    def make_all_stacks(self, weight_type = 1, pol='T', directory = '/scratch/r/rbond/jorlo/actxminorplanets/sigurd/', plot = False, verbose = False, movie = False, weight_debug = False, time_debug =  True, lightcurve = False, freq_adjust = None, extern_calib = None, time_cut = None):
+    def make_all_stacks(self, weight_type = 1, pol='T', directory = '/scratch/r/rbond/jorlo/actxminorplanets/sigurd/', plot = False, verbose = False, weight_debug = False, time_debug =  True, lightcurve = False, freq_adjust = None, extern_calib = None, time_cut = None):
         for pa_key in self.map_dict['night'].keys(): 
             for freq_key in self.map_dict['night'][pa_key].keys():
                 
@@ -625,9 +598,9 @@ class minorplanet():
                 else:
                     cur_extern_calib = None
 
-                self.make_stack(pa = pa_key, freq = freq_key, pol=pol, plot = plot, verbose = verbose, weight_type = weight_type, time = 'night', movie = movie, weight_debug = weight_debug, 
+                self.make_stack(pa = pa_key, freq = freq_key, pol=pol, plot = plot, verbose = verbose, weight_type = weight_type, time = 'night', weight_debug = weight_debug, 
                                 time_debug  = time_debug, lightcurve = lightcurve, freq_adjust = cur_freq_adjust, extern_calib = cur_extern_calib, time_cut = time_cut)
-                self.make_stack(pa = pa_key, freq = freq_key, pol=pol, plot = plot, verbose = verbose, weight_type = weight_type, time = 'day', movie = movie, weight_debug = weight_debug,
+                self.make_stack(pa = pa_key, freq = freq_key, pol=pol, plot = plot, verbose = verbose, weight_type = weight_type, time = 'day', weight_debug = weight_debug,
                                 time_debug=time_debug, lightcurve = lightcurve, freq_adjust = cur_freq_adjust, extern_calib = cur_extern_calib, time_cut = time_cut)
         if pol == 'T':        
             with open(directory+'fluxes/{}_flux_dict.pk'.format(self.name), 'wb') as f:
