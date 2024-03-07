@@ -7,7 +7,7 @@ parser.add_argument("-A", "--astinfo",       type=str,   default=None)
 parser.add_argument("-N", "--name",  type=str,   default=None)
 parser.add_argument("-r", "--rad",   type=float, default=10.0)
 parser.add_argument("-p", "--pad",   type=float, default=30.0)
-parser.add_argument("-t", "--tol",   type=float, default=0.0)
+parser.add_argument("-t", "--tol",   type=float, default=0.1)
 parser.add_argument("-l", "--lknee", type=float, default=1500)
 parser.add_argument("-a", "--alpha", type=float, default=3.5)
 parser.add_argument("-b", "--beam",  type=float, default=0)
@@ -17,16 +17,39 @@ parser.add_argument("-i", "--index", type=int, default=-1)
 args = parser.parse_args()
 import numpy as np, ephem
 from numpy.lib import recfunctions
-from pixell import utils, enmap, bunch, reproject, colors, coordinates, mpi
+from pixell import utils, enmap, bunch, reproject, colors, coordinates#, mpi
 from scipy import interpolate, optimize
 import glob
 import matplotlib.pyplot as plt
 import matplotlib
+import pickle as pk
 
 matplotlib.use('pdf')
 
 from pathlib import Path
 from asteroid_utils_pixell import minorplanet, get_desig
+
+try:
+    import mpi4py.rc
+
+    mpi4py.rc.threads = False
+    from mpi4py import MPI
+
+    print("mpi4py imported")
+    comm = MPI.COMM_WORLD
+    myrank = comm.Get_rank()
+    nproc = comm.Get_size()
+    print("nproc:, ", nproc)
+    if nproc > 1:
+        have_mpi = True
+    else:
+        have_mpi = False
+except:
+    MPI = None
+    comm = None
+    have_mpi = False
+    myrank = 0
+    nproc = 1
 
 def in_box(box, point): #checks if points are inside box or not
 	box   = np.asarray(box)
@@ -86,7 +109,7 @@ def geocentric_to_site(pos, dist, site_pos, site_alt, ctime):
 	pos_rel  = utils.rect2ang(vec_rel)
 	return pos_rel, dist_rel
 
-comm    = mpi.COMM_WORLD
+comm    = MPI.COMM_WORLD
 verbose = args.verbose - args.quiet
 
 # Radius of output thumbnails
@@ -105,14 +128,14 @@ alpha    = -args.alpha
 beam     = args.beam*utils.fwhm*utils.arcmin
 site     = coordinates.default_site
 site_pos = np.array([site.lon,site.lat])*utils.degree
-time_tol  = 60
+time_tol  = 600
 time_sane = 3600*24
 
 # Expand any globs in the input file names
-print(args.ifiles)
+
 ifiles  = sum([sorted(utils.glob(ifile)) for ifile in args.ifiles],[]) 
 # Read in and spline the orbit
-
+#print(ifiles)
 if args.index == -1:
 	info    = np.load(args.astinfo).view(np.recarray)
 else:
@@ -124,7 +147,8 @@ utils.mkdir(args.odir)
 print('Starting {}'.format(name))
 print('Index {}'.format(args.index))
 
-for fi in range(comm.rank, len(ifiles), comm.size):
+for fi in range(myrank, len(ifiles), nproc):
+#for fi in range(len(ifiles)):
 	ifile    = ifiles[fi]
 	infofile = utils.replace(ifile, "map.fits", "info.hdf")
 	tfile    = utils.replace(ifile, "map.fits", "time.fits")
@@ -171,6 +195,8 @@ for fi in range(comm.rank, len(ifiles), comm.size):
 	if err > time_tol or abs(ctime-ctime0) > time_sane:
 		if verbose >= 2:
 			print(colors.white + message + " time" + colors.reset)
+			#print(err)
+			#print(ifile)
 		continue
 	# Now that we have the proper time, get the asteroids actual position
 	adata    = orbit(ctime)
@@ -192,6 +218,8 @@ for fi in range(comm.rank, len(ifiles), comm.size):
 	if np.mean(imap.submap(thumb_box) == 0) > args.tol:
 		if verbose >= 2:
 			print(colors.white + message + " unhit" + colors.reset)
+			#print(ast_pos)
+
 			continue
 	# Filter the map
 	wmap     = filter_map(imap, lknee=lknee, alpha=alpha, beam=beam)
@@ -208,15 +236,32 @@ for fi in range(comm.rank, len(ifiles), comm.size):
 	kmap = reproject.thumbnails(kap, ast_pos, r=r_thumb)
 	enmap.write_map(kname, kmap)
 	
-	info.ctime_ast = ctime
+	info.ctime_ast = ctime[0]
 	info.ctime_err = err 
 	bunch.write(infoname, info)
-
+	#print('info: ', infoname)
 	if verbose >= 1:
 		print(colors.lgreen + message + " ok" + colors.reset)
+		#print("time: ", ctime[0])
+	
+		
 print('Finished')
 
-ast = minorplanet(name, semimajor)
-ast.make_all_stacks(weight_type='spt', lightcurve = True, time_debug = True)
-
+if myrank == 0:
+    with open('/home/r/rbond/jorlo/dev/minorplanets/calibs_dict_ACTxACT-dr4.pkl', 'rb') as f:
+        dr6_calib = pk.load(f)
+    calib_dict = {'pa4':{'150':dr6_calib['dr6_pa4_f150']['calibs'], '220':dr6_calib['dr6_pa4_f220']['calibs']},
+                  'pa5':{'090':dr6_calib['dr6_pa5_f090']['calibs'], '150':dr6_calib['dr6_pa5_f150']['calibs']},
+                  'pa6':{'090':dr6_calib['dr6_pa6_f090']['calibs'], '150':dr6_calib['dr6_pa6_f150']['calibs']}
+             }
+    freq_dict = {'pa4':{'150':148.7e9, '220':227.2e9},
+                 'pa5':{'090':96.7e9,  '150':149.5e9},
+                 'pa6':{'090':95.5e9,  '150':148.1e9}}#Effective centers from Hasslefield paper 2022 in prep
+    ast = minorplanet(name, semimajor)
+    ast.make_all_stacks(weight_type='paper_weight', lightcurve = True, freq_adjust = freq_dict, extern_calib = calib_dict)
+    print("Made T for ", name)
+    ast.make_all_stacks(weight_type='paper_weight', pol="U", lightcurve = True, freq_adjust = freq_dict, extern_calib = calib_dict)
+    print("Made U for", name)
+    ast.make_all_stacks(weight_type='paper_weight', pol="Q", lightcurve = True, freq_adjust = freq_dict, extern_calib = calib_dict)
+    print("All done for", name)
 
