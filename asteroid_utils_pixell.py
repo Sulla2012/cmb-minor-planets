@@ -465,7 +465,7 @@ class minorplanet():
             plt.savefig(path + '{}_{}_{}_{}.png'.format(int((ctime0/3600)%24), pa, freq, int(ctime0)))  
             plt.close()
 
-            hours.append(int((ctime0/3600)%24))          
+            
             fluxes_lc.append(rho[pol,:,:].at([0,0]) /  kappa[pol,:,:].at([0,0]) * adjust)
             errs_lc.append(1/kappa[pol,:,:].at([0,0])**(1/2) * adjust) 
             times_lc.append(ctime0) 
