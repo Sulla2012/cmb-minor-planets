@@ -324,7 +324,7 @@ class minorplanet():
         #plt.show()
         plt.close()
         
-    def make_stack(self, pa, freq = 'f150', pol='T', restrict_time = False, weight_type=None, plot = False, verbose = False, weight_debug = False, time_debug = True, time = 'night', lightcurve=False, freq_adjust = None, extern_calib = None, time_cut = None):
+    def make_stack(self, pa, freq = 'f150', pol='T', restrict_time = False, weight_type=None, plot = False, verbose = False, weight_debug = False, time = 'night', lightcurve=False, freq_adjust = None, extern_calib = None, time_cut = None):
         pol_dict = {'T':0, 'Q':1, 'U':2}
         pol = pol_dict[pol]
 
@@ -354,7 +354,8 @@ class minorplanet():
             errs_lc = []
             times_lc = []
             Fs_lc = []           
- 
+            rho_lc = []
+            kappa_lc = [] 
         for i, dirname in enumerate(os.listdir(path=self.path+'/'+self.name+'/')):
             
             if dirname.find('kappa.fits') == -1: continue #Just look at the kappa maps
@@ -366,7 +367,7 @@ class minorplanet():
             infofile = utils.replace(dirname, "kappa.fits", "info.hdf")
             kappa = enmap.read_map(self.path+'/'+self.name+'/' + dirname)
             rho = enmap.read_map(self.path+'/'+self.name+'/' + rhofile)
-            info = bunch.read(self.path+'/'+self.name+'/' +infofile)
+            info = bunch.read(self.path+self.name+'/' +infofile)
      
             kappa = np.maximum(kappa, np.max(kappa)*1e-2) 
            
@@ -390,7 +391,7 @@ class minorplanet():
                         break
                 if flag:  
                     continue
-             
+            
 
             if restrict_time and (ctime0 < restrict_time[0] or restrict_time[1] < ctime0): continue #restrict to only within a certain time range
             hour = (ctime0/3600)%24
@@ -424,9 +425,8 @@ class minorplanet():
                 d_sun_0, d_earth_0 = self.semimajor,self.semimajor
                 weight = 1 / (d_sun_0**2 * d_earth_0**2/(delta_earth**2*delta_sun**2))
                 if verbose: print('Weight = ', weight)
-            elif weight_type == 'spt': 
-                d_sun_0, d_earth_0 = self.semimajor,self.semimajor
-            
+            elif weight_type == 'paper_weight': 
+           
                 cur_time = utils.ctime2djd(ctime0) 
                 
                 self.sun.compute(cur_time)
@@ -434,7 +434,7 @@ class minorplanet():
                 alpha = compute_alpha(self.sun.ra, self.sun.dec, self.sun.earth_distance, ra_ast, dec_ast, delta_earth)
                 alpha *= (180/np.pi)
                 
-                #weight = (delta_earth**(2) * delta_sun**(-1/2)*10**(-0.004*alpha))
+               
                 weight = 1/(delta_sun**(-1/2) * delta_earth**(-2) *10**(-0.004*alpha)) 
                 if verbose: 
                     print('Weight = ', weight) 
@@ -459,8 +459,7 @@ class minorplanet():
             #if np.amax(np.abs(flux_map)) >10000: continue
             if np.median(np.abs(sn_map))>1.4 and weight_type != 'earth_only': 
                 print('Bad Tile: S/n')
-                continue           
-            
+                continue            
            
             rho_stack += rho[pol,:,:]/weight
             kappa_stack += kappa[pol,:,:]/weight**2
@@ -469,7 +468,10 @@ class minorplanet():
                 sn = rho[pol,:,:].at([0,0]) / np.sqrt(kappa[pol,:,:].at([0,0]))
                 if verbose:
                     print('Rho \t Kappa \t Flux \t SN\t Scaled Flux\n')
-                    print(rho[pol,:,:].at([0,0]), '\t', kappa[pol,:,:].at([0,0]), '\t', flux, '\t', sn, '\t', weight*flux)
+                    print(rho[pol,:,:].at([0,0]), '\t', kappa[pol,:,:].at([0,0]), '\t', flux*adjust, '\t', sn, '\t', weight*flux)
+                    print("LC comp: ", rho[pol,:,:].at([0,0]) /  kappa[pol,:,:].at([0,0]) * adjust)
+                    if pol >0 and sn >3:
+                        print("High S/n")
             rho_un += rho[pol,:,:]
             kappa_un+= kappa[pol,:,:]
             
@@ -495,6 +497,8 @@ class minorplanet():
                 print("Kappa: ", np.sqrt( kappa[pol,:,:]/weight**2).at([0,0]))
                 print('S/n: ', sn_map.at([0,0]))        
                 print("Median S/n: ", np.median(np.abs(sn_map)))
+                print("Mean Flux ", np.mean(flux_map))
+                print("Mean abs Flux ", np.mean(np.abs(flux_map)))
                 print("Max flux: ", np.amax(np.abs(flux_map)))
                 plt.show()
                 plt.close()
@@ -519,13 +523,15 @@ class minorplanet():
             if lightcurve:
                 fluxes_lc.append(rho[pol,:,:].at([0,0]) /  kappa[pol,:,:].at([0,0]) * adjust)
                 errs_lc.append(1/kappa[pol,:,:].at([0,0])**(1/2) * adjust) 
-                times_lc.append(ctime0)
+                times_lc.append(ctime0) 
                 Fs_lc.append(weight)
+                rho_lc.append(rho[pol, :, :].at([0,0]))
+                kappa_lc.append(kappa[pol, :, :].at([0,0]))
 
         try: 
             stack = (rho_stack/kappa_stack) #/ (kappa_stack/kappa_weight)
         except ZeroDivisionError:
-            print(time, pa, freq)
+            print("Zero Division Error")  
             stack = np.zeros((81,81))
             self.map_dict[time][pa][freq]['flux'] = stack
             self.map_dict[time][pa][freq]['snr'] = stack
@@ -538,9 +544,11 @@ class minorplanet():
         plt.scatter(40,40, marker = '+', color = 'r') 
         plt.imshow(stack)
         plt.colorbar()
-        plt.title('{} Flux of {} from PA {} at Freq {}'.format(time, self.name, pa, freq)) 
+        plt.title('{} Flux of {} from PA {} at Freq {}, Flux {}'.format(time, self.name, pa, freq,stack.at([0,0])*adjust)) 
         plt.savefig('/scratch/r/rbond/jorlo/actxminorplanets/sigurd/plots/stacks/{}_{}_{}_{}.pdf'.format(time, self.name, pa, freq)) 
-        if plot: plt.show()
+        if plot: 
+            print('{} Flux of {} from PA {} at Freq {}, Flux {}'.format(time, self.name, pa, freq, stack.at([0,0])*adjust))
+            plt.show()
         plt.close()
         
         if plot and verbose:
@@ -577,12 +585,29 @@ class minorplanet():
             debug_dict = {'sn':sns,'iso':isos, 'hour':hours, 'weights':weights, 'alphas':alphas, 'r_sun':r_suns, 'r_earth':r_earths, 'fluxes': fluxes}
             with open('/home/r/rbond/jorlo/dev/minorplanets/pks/{}_debug_{}_{}_{}.pk'.format(self.name, time, pa, freq), 'wb') as f: 
                 pk.dump(debug_dict, f)           
-        if lightcurve:
-            lc_dict = {'flux': fluxes_lc, 'err':errs_lc, 'time':times_lc, 'F':Fs_lc}
-            with open('/scratch/r/rbond/jorlo/actxminorplanets/sigurd/lightcurves/{}_lc_{}_{}_{}.pk'.format(self.name, time, pa, freq), 'wb') as f:
+        if lightcurve: 
+            lc_dict = {'flux': fluxes_lc, 'err':errs_lc, 'time':times_lc, 'F':Fs_lc, "rho":rho_lc, "kappa":kappa_lc}
+            if weight_type == 1:
+                name = '{}_unweighted_lc_{}_{}_{}'.format(self.name, time, pa, freq)
+            else:
+                cur_pol = [i for i in pol_dict if pol_dict[i]==pol] #Gets key from pol index
+                name = '{}_{}_{}_lc_{}_{}_{}'.format(pol, self.name, weight_type, time, pa, freq)
+            with open('/scratch/r/rbond/jorlo/actxminorplanets/sigurd/lightcurves/'+name+".pk", 'wb') as f:
                 pk.dump(lc_dict, f)
 
-    def make_all_stacks(self, weight_type = 1, pol='T', directory = '/scratch/r/rbond/jorlo/actxminorplanets/sigurd/', plot = False, verbose = False, weight_debug = False, time_debug =  True, lightcurve = False, freq_adjust = None, extern_calib = None, time_cut = None):
+            c1 = fits.Column(name = "Time", array = np.array(times_lc), format = "D", unit = "Unix Timestamp")
+            c2 = fits.Column(name = "Flux", array = np.array(fluxes_lc), format = "D", unit = "mJy")
+            c3 = fits.Column(name = "FluxUncertainty", array = np.array(errs_lc), format = "D", unit = "mJy")
+            c4 = fits.Column(name = "Weight", array = np.array(Fs_lc), format = "D", unit = "unitless")
+            #cols = fits.ColDefs([c1, c2, c3])
+            hdu = fits.BinTableHDU.from_columns([c1, c2, c3, c4])
+            
+            with open('/scratch/r/rbond/jorlo/actxminorplanets/sigurd/lightcurves/'+name+".fits", 'wb') as f: 
+                
+                hdu.writeto(f, overwrite = True)
+
+
+    def make_all_stacks(self, weight_type = 1, pol='T', directory = '/scratch/r/rbond/jorlo/actxminorplanets/sigurd/', plot = False, verbose = False, weight_debug = False, lightcurve = False, freq_adjust = None, extern_calib = None, time_cut = None):
         for pa_key in self.map_dict['night'].keys(): 
             for freq_key in self.map_dict['night'][pa_key].keys():
                 
@@ -599,11 +624,15 @@ class minorplanet():
                     cur_extern_calib = None
 
                 self.make_stack(pa = pa_key, freq = freq_key, pol=pol, plot = plot, verbose = verbose, weight_type = weight_type, time = 'night', weight_debug = weight_debug, 
-                                time_debug  = time_debug, lightcurve = lightcurve, freq_adjust = cur_freq_adjust, extern_calib = cur_extern_calib, time_cut = time_cut)
+                                lightcurve = lightcurve, freq_adjust = cur_freq_adjust, extern_calib = cur_extern_calib, time_cut = time_cut)
                 self.make_stack(pa = pa_key, freq = freq_key, pol=pol, plot = plot, verbose = verbose, weight_type = weight_type, time = 'day', weight_debug = weight_debug,
-                                time_debug=time_debug, lightcurve = lightcurve, freq_adjust = cur_freq_adjust, extern_calib = cur_extern_calib, time_cut = time_cut)
-        if pol == 'T':        
-            with open(directory+'fluxes/{}_flux_dict.pk'.format(self.name), 'wb') as f:
+                                lightcurve = lightcurve, freq_adjust = cur_freq_adjust, extern_calib = cur_extern_calib, time_cut = time_cut)
+        if pol == 'T':
+            if weight_type == 1:
+                fname = "fluxes/{}_unweight_flux_dict.pk".format(self.name)
+            else:
+                fname = "fluxes/{}_{}_weight_flux_dict.pk".format(self.name, weight_type)
+            with open(directory+fname, 'wb') as f:
                 print('Flux dict written for ', self.name)
                 pk.dump(self.flux_dict, f)
         else:
