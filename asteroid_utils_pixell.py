@@ -449,9 +449,10 @@ class minorplanet():
            
             rho_weight += weight
             kappa_weight += weight**2  
-
-            
+ 
             flux_map = (rho[pol,:,:]/weight) /  (kappa[pol,:,:]/weight**2)
+
+            ts = int(ctime0)
             
             plt.scatter(40,40, marker = '+', color = 'r')
             plt.title(datetime.datetime.utcfromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S'))
