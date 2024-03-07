@@ -14,6 +14,7 @@ parser.add_argument("-b", "--beam",  type=float, default=0)
 parser.add_argument("-v", "--verbose", default=1, action="count")
 parser.add_argument("-e", "--quiet",   default=0, action="count")
 parser.add_argument("-i", "--index", type=int, default=-1)
+parser.add_argument("-f", "--freq", type=str, default=None)
 args = parser.parse_args()
 import numpy as np, ephem
 from numpy.lib import recfunctions
@@ -148,102 +149,102 @@ print('Starting {}'.format(name))
 print('Index {}'.format(args.index))
 
 for fi in range(myrank, len(ifiles), nproc):
-#for fi in range(len(ifiles)):
-	ifile    = ifiles[fi]
-	infofile = utils.replace(ifile, "map.fits", "info.hdf")
-	tfile    = utils.replace(ifile, "map.fits", "time.fits")
-	varfile    = utils.replace(ifile, "map.fits", "ivar.fits")
-	rhofile    = utils.replace(ifile, "map.fits", "rho.fits")
-	kfile    = utils.replace(ifile, "map.fits", "kappa.fits")
-
-	ofname   = "%s/%s/%s_%s" % (args.odir, name.capitalize(), name, os.path.basename(ifile))
-	varname   = "%s/%s/%s_%s" % (args.odir, name.capitalize(), name, os.path.basename(varfile))
-	rhoname   = "%s/%s/%s_%s" % (args.odir, name.capitalize(), name, os.path.basename(rhofile))
-	kname   = "%s/%s/%s_%s" % (args.odir, name.capitalize(), name, os.path.basename(kfile))
-	infoname = "%s/%s/%s_%s" % (args.odir, name.capitalize(), name, os.path.basename(infofile))
-	
-	info     = bunch.read(infofile)
-	# Get the asteroid coordinates
-	ctime0   = np.mean(info.period)
-	adata0   = orbit(ctime0)
-	ast_pos0 = utils.rewind(adata0[1::-1])
-	message  = "%.0f  %8.3f %8.3f  %8.3f %8.3f %8.3f %8.3f" % (info.t, ast_pos0[1]/utils.degree, ast_pos0[0]/utils.degree, info.box[0,1]/utils.degree, info.box[1,1]/utils.degree, info.box[0,0]/utils.degree, info.box[1,0]/utils.degree)
-	# Check if we're in bounds
-	if not in_box(info.box, ast_pos0):
-		if verbose >= 3:
-			print(colors.lgray + message + " outside" + colors.reset)
-			continue
-	#Ok, should try to read in this map. Decide on
-	# bounding box to read in
-	
-	
-	full_box  = make_box(ast_pos0, r_full)
-	# Read it and check if we have enough hits in the area we want to use
-	try:
-		tmap = enmap.read_map(tfile, box=full_box)
-		tmap[tmap!=0] += info.t
-	except (TypeError, FileNotFoundError):
-		print("Error reading %s. Skipping" % ifile)
-		continue
-	# Break out early if nothing is hit
-	if np.all(tmap == 0): continue
-		#if verbose >= 2:
-		#	print(colors.white + message + " unhit" + colors.reset)
- 		#continue
-	# Figure out what time the asteroid was actually observed
-	ctime, err = calc_obs_ctime(orbit, tmap, ctime0)
-	if err > time_tol or abs(ctime-ctime0) > time_sane:
-		if verbose >= 2:
-			print(colors.white + message + " time" + colors.reset)
-			#print(err)
-			#print(ifile)
-		continue
-	# Now that we have the proper time, get the asteroids actual position
-	adata    = orbit(ctime)
-	ast_pos  = utils.rewind(adata[1::-1]).reshape((2,))
-	# optionally transform to topocentric here. ~0.1 arcmin effect
-	thumb_box = make_box(ast_pos, r_thumb)
-
-
-	# Read the actual data
-	try:
-		imap = enmap.read_map(ifile, box=full_box)
-		var = enmap.read_map(varfile, box=full_box)
-		rho = enmap.read_map(rhofile, box=full_box)
-		kap = enmap.read_map(kfile, box=full_box)
-	except Exception as e:
-		print(colors.red + str(e) + colors.reset)
-		continue
-
-	if np.mean(imap.submap(thumb_box) == 0) > args.tol:
-		if verbose >= 2:
-			print(colors.white + message + " unhit" + colors.reset)
-			#print(ast_pos)
-
-			continue
-	# Filter the map
-	wmap     = filter_map(imap, lknee=lknee, alpha=alpha, beam=beam)
-	# And reproject it
-	omap = reproject.thumbnails(wmap, ast_pos, r=r_thumb)
-	enmap.write_map(ofname, omap)
-
-	vmap = reproject.thumbnails(var, ast_pos, r=r_thumb)
-	enmap.write_map(varname, vmap)
-
-	rmap = reproject.thumbnails(rho, ast_pos, r=r_thumb)
-	enmap.write_map(rhoname, rmap)
-
-	kmap = reproject.thumbnails(kap, ast_pos, r=r_thumb)
-	enmap.write_map(kname, kmap)
-	
-	info.ctime_ast = ctime[0]
-	info.ctime_err = err 
-	bunch.write(infoname, info)
-	#print('info: ', infoname)
-	if verbose >= 1:
-		print(colors.lgreen + message + " ok" + colors.reset)
-		#print("time: ", ctime[0])
-	
+    ifile    = ifiles[fi]
+    infofile = utils.replace(ifile, "map.fits", "info.hdf")
+    tfile    = utils.replace(ifile, "map.fits", "time.fits")
+    varfile    = utils.replace(ifile, "map.fits", "ivar.fits")
+    rhofile    = utils.replace(ifile, "map.fits", "rho.fits")
+    kfile    = utils.replace(ifile, "map.fits", "kappa.fits")
+    
+    if args.freq:
+        if args.freq not in kfile: continue
+    
+    ofname   = "%s/%s/%s_%s" % (args.odir, name.capitalize(), name, os.path.basename(ifile))
+    varname   = "%s/%s/%s_%s" % (args.odir, name.capitalize(), name, os.path.basename(varfile))
+    rhoname   = "%s/%s/%s_%s" % (args.odir, name.capitalize(), name, os.path.basename(rhofile))
+    kname   = "%s/%s/%s_%s" % (args.odir, name.capitalize(), name, os.path.basename(kfile))
+    infoname = "%s/%s/%s_%s" % (args.odir, name.capitalize(), name, os.path.basename(infofile))
+    
+    info     = bunch.read(infofile)
+    # Get the asteroid coordinates
+    ctime0   = np.mean(info.period)
+    adata0   = orbit(ctime0)
+    ast_pos0 = utils.rewind(adata0[1::-1])
+    message  = "%.0f  %8.3f %8.3f  %8.3f %8.3f %8.3f %8.3f" % (info.t, ast_pos0[1]/utils.degree, ast_pos0[0]/utils.degree, info.box[0,1]/utils.degree, info.box[1,1]/utils.degree, info.box[0,0]/utils.degree, info.box[1,0]/utils.degree)
+    # Check if we're in bounds
+    if not in_box(info.box, ast_pos0):
+        if verbose >= 3:
+    	    print(colors.lgray + message + " outside" + colors.reset)
+    	    continue
+    #Ok, should try to read in this map. Decide on
+    # bounding box to read in
+    
+    
+    full_box  = make_box(ast_pos0, r_full)
+    # Read it and check if we have enough hits in the area we want to use
+    try:
+        tmap = enmap.read_map(tfile, box=full_box)
+        tmap[tmap!=0] += info.t
+    except (TypeError, FileNotFoundError):
+        print("Error reading %s. Skipping" % ifile)
+        continue
+    # Break out early if nothing is hit
+    if np.all(tmap == 0): continue
+    	#if verbose >= 2:
+    	#	print(colors.white + message + " unhit" + colors.reset)
+    	#continue
+    # Figure out what time the asteroid was actually observed
+    ctime, err = calc_obs_ctime(orbit, tmap, ctime0)
+    if err > time_tol or abs(ctime-ctime0) > time_sane:
+        if verbose >= 2:
+    	    print(colors.white + message + " time" + colors.reset)
+    		#print(err)
+    		#print(ifile)
+        continue
+    # Now that we have the proper time, get the asteroids actual position
+    adata    = orbit(ctime)
+    ast_pos  = utils.rewind(adata[1::-1]).reshape((2,))
+    # optionally transform to topocentric here. ~0.1 arcmin effect
+    thumb_box = make_box(ast_pos, r_thumb)
+    
+    
+    # Read the actual data
+    try:
+        imap = enmap.read_map(ifile, box=full_box)
+        var = enmap.read_map(varfile, box=full_box)
+        rho = enmap.read_map(rhofile, box=full_box)
+        kap = enmap.read_map(kfile, box=full_box)
+    except Exception as e:
+        print(colors.red + str(e) + colors.reset)
+        continue
+    
+    if np.mean(imap.submap(thumb_box) == 0) > args.tol:
+        if verbose >= 2:
+            print(colors.white + message + " unhit" + colors.reset)
+            continue
+    # Filter the map
+    wmap     = filter_map(imap, lknee=lknee, alpha=alpha, beam=beam)
+    # And reproject it
+    omap = reproject.thumbnails(wmap, ast_pos, r=r_thumb)
+    enmap.write_map(ofname, omap)
+    
+    vmap = reproject.thumbnails(var, ast_pos, r=r_thumb)
+    enmap.write_map(varname, vmap)
+    
+    rmap = reproject.thumbnails(rho, ast_pos, r=r_thumb)
+    enmap.write_map(rhoname, rmap)
+    
+    kmap = reproject.thumbnails(kap, ast_pos, r=r_thumb)
+    enmap.write_map(kname, kmap)
+    
+    info.ctime_ast = ctime[0]
+    info.ctime_err = err 
+    bunch.write(infoname, info)
+    print('info: ', infoname)
+    if verbose >= 1:
+        print(colors.lgreen + message + " ok" + colors.reset)
+    	#print("time: ", ctime[0])
+    
 		
 print('Finished')
 
