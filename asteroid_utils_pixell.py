@@ -287,10 +287,7 @@ class minorplanet():
                           }                              
         #We interpolate the orbit for the minor planet at initialization as it's fairly fast
         #Stacking is a method as it is much slower so we want to call it only when we actually care
-        #self.eph_table = QueryHorizons(time_start=self.t_start, time_end=self.t_end, 
-        #                               observer_location=obs, step = '1d').queryObjects([str(self.name)])
-        
-        #self.interp_orbit = OrbitInterpolator(self.eph_table)
+
         if self.name in ['Jupiter', 'Mars', 'Mercury', 'Moon', 'Neptune', 'Saturn', 'Sun', 'Uranus', 'Venus']:
             #We use planets as calibration checks, this just loads them from the right place if they're a planet
             info = np.load('/home/r/rbond/sigurdkn/project/actpol/ephemerides/objects_tmp/{}.npy'.format(self.name)).view(np.recarray)
@@ -301,7 +298,7 @@ class minorplanet():
         
 
     def show_orbit(self, t_orb_start = '2013-01-01T00:00:00', t_orb_end = '2020-01-01T00:00:00', 
-                   directory = None):
+                   directory = None, show = False):
         '''
         Function that plots the orbit of the minor planet from t_orb_start to t_orb_end
         '''
@@ -321,10 +318,271 @@ class minorplanet():
         plt.title('Orbital Plot of {}'.format(self.eph_table['targetname'][0]))
         if directory is not None:
             plt.savefig(directory+'{}_orbit.pdf'.format(str(self.eph_table['targetname'][0]).replace(' ', '_').replace('(','').replace(')','')))
-        #plt.show()
+        if show:
+            plt.show()
         plt.close()
         
-    def make_stack(self, pa, freq = 'f150', pol='T', restrict_time = False, weight_type=None, plot = False, verbose = False, weight_debug = False, time = 'night', lightcurve=False, freq_adjust = None, extern_calib = None, time_cut = None):
+    def make_stack(self, pa, freq, pol = 'T', restrict_time = False, weight_type = None, plot = False, verbose = False, weight_debug = False, time = 'night', lightcurve=False, freq_adjust = None, extern_calib = None, time_cut = None):
+        """
+        Function which stacks asteroid in given array, frequency, and polarization
+
+        pa : str
+            String specifying which arrays to stack on. Options: pa4, pa5, pa6, pa7
+        freq : str
+            String specifying which frequency to stack. Options: f030, f090, f150, f220
+        pol : str
+            String specifying which polarization to stack. Options: T, Q, U
+        restrict_time : False | list[float]
+            Restrict times stacked on two between two times, specified in unix time.
+        weight_type : none | str
+            String specifying weighting scheme to use. If none, no weighting is used. Currently only supports paper_weight
+        time : str
+            String specifying stacking on day or night data.
+        freq_adjust : none | dict
+            Dictionary specifying the bandcenter adjustments per array and frequency.
+        extern_calib : none | dict
+            Dictionary specifying an external source of flux calibration to be applied.
+        time_cut : none | list[float]
+            Cuts specific unix times from stack
+        """
+        pol_dict = {'T':0, 'Q':1, 'U':2}
+        pol = pol_dict[pol]
+
+        if not os.path.isdir(self.path+'/'+self.name+'/'):
+            print('Depth 1 stamps not made, please make them')
+            return
+        rho_stack = 0
+        kappa_stack = 0
+               
+        rho_weight = 0
+        kappa_weight = 0 
+         
+        fluxes_lc = []
+        errs_lc = []
+        times_lc = []
+        Fs_lc = []           
+        rho_lc = []
+        kappa_lc = [] 
+        
+        for i, dirname in enumerate(os.listdir(path=self.path+'/'+self.name+'/')):
+            
+            if dirname.find('kappa.fits') == -1: continue #Just look at the kappa maps
+            if dirname.find(pa) == -1: continue
+            if dirname.find('f'+str(freq)) == -1: continue #Check each file to see if it's the specified freq
+            if verbose: print('In map: ', dirname)
+         
+            rhofile    = utils.replace(dirname, "kappa.fits", "rho.fits")
+            infofile = utils.replace(dirname, "kappa.fits", "info.hdf")
+            kappa = enmap.read_map(self.path+'/'+self.name+'/' + dirname)
+            rho = enmap.read_map(self.path+'/'+self.name+'/' + rhofile)
+            info = bunch.read(self.path+self.name+'/' +infofile)
+     
+            kappa = np.maximum(kappa, np.max(kappa)*1e-2) 
+           
+            ctime0 = info.ctime_ast
+ 
+            #Mask out regeions of high kappa and near border of map           
+            tol = 1e-2
+            r = 5 
+            mask = kappa > np.max(kappa)*tol
+            mask = mask.distance_transform(rmax=r) >= r
+            rho   *= mask
+            kappa *= mask
+            
+            if kappa[pol,:,:].at([0,0]) <= 1e-9:  
+                continue #checks if in masked area
+
+            if time_cut is not None:
+                flag = False
+                for j in range(len(time_cut)):
+                    if (time_cut[j][0] < ctime0) and (ctime0 < time_cut[j][1]): 
+                        flag = True
+                        break
+                if flag:  
+                    continue
+            
+            if restrict_time and (ctime0 < restrict_time[0] or restrict_time[1] < ctime0): continue #restrict to only within a certain time range
+
+            hour = (ctime0/3600)%24
+
+            if time == 'night' and (11<hour<23): continue
+            elif time == 'day' and (hour<11 or hour >23): continue
+
+            adata = self.orbit(ctime0)
+            ra_ast, dec_ast, delta_earth, delta_sun, ignore_ang = adata
+            
+           if weight_type == 'paper_weight': 
+           
+                cur_time = utils.ctime2djd(ctime0) 
+                
+                self.sun.compute(cur_time)
+                
+                alpha = compute_alpha(self.sun.ra, self.sun.dec, self.sun.earth_distance, ra_ast, dec_ast, delta_earth)
+                alpha *= (180/np.pi)
+                
+               
+                weight = 1/(delta_sun**(-1/2) * delta_earth**(-2) *10**(-0.004*alpha)) 
+                if verbose: 
+                    print('Weight = ', weight)  
+            else:
+                weight = 1
+
+            adjust = 1 #This just allows us to collect all sources of adjustment into one multiplicative factor
+            if freq_adjust:
+                if int(freq) == 90: old_freq = 98e9
+                elif int(freq) == 150: old_freq = 150e9
+                elif int(freq) == 220: old_freq = 220e9
+                adjust *= utils.dplanck(freq_adjust)/utils.dplanck(old_freq)
+         
+            if extern_calib:
+                adjust *= extern_calib
+            
+            #Form the sn only map to find tiles with anomolously high s/n
+            sn_map = (rho[pol,:,:]/weight)/np.sqrt( kappa[pol,:,:]/weight**2)
+            if np.median(np.abs(sn_map))>1.4: 
+                print('Bad Tile: S/n')
+                continue            
+ 
+            #Add to rho and kappa stack           
+            rho_stack += rho[pol,:,:]/weight
+            kappa_stack += kappa[pol,:,:]/weight**2
+           
+            rho_weight += weight
+            kappa_weight += weight**2  
+
+            
+            flux_map = (rho[pol,:,:]/weight) /  (kappa[pol,:,:]/weight**2)
+            
+            plt.scatter(40,40, marker = '+', color = 'r')
+            plt.title(datetime.datetime.utcfromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S'))
+            plt.imshow(flux_map)
+            plt.colorbar()
+            path = '/scratch/r/rbond/jorlo/actxminorplanets/sigurd/plots/stamps/{}/'.format(self.name)
+            if not os.path.exists(path):
+                os.makedirs(path)
+            plt.savefig(path + '{}_{}_{}_{}.pdf'.format(int((ctime0/3600)%24), pa, freq, int(ctime0)))
+            plt.savefig(path + '{}_{}_{}_{}.png'.format(int((ctime0/3600)%24), pa, freq, int(ctime0)))  
+            plt.close()
+
+            hours.append(int((ctime0/3600)%24))          
+            fluxes_lc.append(rho[pol,:,:].at([0,0]) /  kappa[pol,:,:].at([0,0]) * adjust)
+            errs_lc.append(1/kappa[pol,:,:].at([0,0])**(1/2) * adjust) 
+            times_lc.append(ctime0) 
+            Fs_lc.append(weight)
+            rho_lc.append(rho[pol, :, :].at([0,0]))
+            kappa_lc.append(kappa[pol, :, :].at([0,0]))
+
+        try: 
+            stack = (rho_stack/kappa_stack) #/ (kappa_stack/kappa_weight)
+        except ZeroDivisionError:
+            print("Zero Division Error")  
+            stack = np.zeros((81,81))
+            self.map_dict[time][pa][freq]['flux'] = stack
+            self.map_dict[time][pa][freq]['snr'] = stack
+
+            self.flux_dict[time][pa][freq]['flux'] = 0
+            self.flux_dict[time][pa][freq]['var'] = 0
+            return 
+
+        
+        plt.scatter(40,40, marker = '+', color = 'r') 
+        plt.imshow(stack)
+        plt.colorbar()
+        plt.title('{} Flux of {} from PA {} at Freq {}, Flux {}'.format(time, self.name, pa, freq,stack.at([0,0])*adjust)) 
+        plt.savefig('/scratch/r/rbond/jorlo/actxminorplanets/sigurd/plots/stacks/{}_{}_{}_{}.pdf'.format(time, self.name, pa, freq)) 
+        if plot: 
+            print('{} Flux of {} from PA {} at Freq {}, Flux {}'.format(time, self.name, pa, freq, stack.at([0,0])*adjust))
+            plt.show()
+        plt.close()
+                
+        self.map_dict[time][pa][freq]['flux'] = stack * adjust
+        self.map_dict[time][pa][freq]['snr'] = rho_stack/np.sqrt(kappa_stack)         
+        
+        self.flux_dict[time][pa][freq]['flux'] = stack.at([0,0]) * adjust
+        self.flux_dict[time][pa][freq]['var'] = 1/np.sqrt(np.mean(kappa_stack)) * adjust
+   
+        lc_dict = {'flux': fluxes_lc, 'err':errs_lc, 'time':times_lc, 'F':Fs_lc, "rho":rho_lc, "kappa":kappa_lc}
+        if weight_type == 1:
+            name = '{}_unweighted_lc_{}_{}_{}'.format(self.name, time, pa, freq)
+        else:
+            cur_pol = [i for i in pol_dict if pol_dict[i]==pol] #Gets key from pol index
+            name = '{}_{}_{}_lc_{}_{}_{}'.format(pol, self.name, weight_type, time, pa, freq)
+        with open('/scratch/r/rbond/jorlo/actxminorplanets/sigurd/lightcurves/'+name+".pk", 'wb') as f:
+            pk.dump(lc_dict, f)
+
+        c1 = fits.Column(name = "Time", array = np.array(times_lc), format = "D", unit = "Unix Timestamp")
+        c2 = fits.Column(name = "Flux", array = np.array(fluxes_lc), format = "D", unit = "mJy")
+        c3 = fits.Column(name = "FluxUncertainty", array = np.array(errs_lc), format = "D", unit = "mJy")
+        c4 = fits.Column(name = "Weight", array = np.array(Fs_lc), format = "D", unit = "unitless")
+        #cols = fits.ColDefs([c1, c2, c3])
+        hdu = fits.BinTableHDU.from_columns([c1, c2, c3, c4])
+        
+        with open('/scratch/r/rbond/jorlo/actxminorplanets/sigurd/lightcurves/'+name+".fits", 'wb') as f:           
+            hdu.writeto(f, overwrite = True)
+
+    def make_all_stacks(self, weight_type = 1, pol='T', directory = '/scratch/r/rbond/jorlo/actxminorplanets/sigurd/', plot = False, verbose = False, weight_debug = False, lightcurve = False, freq_adjust = None, extern_calib = None, time_cut = None):
+        for pa_key in self.map_dict['night'].keys(): 
+            for freq_key in self.map_dict['night'][pa_key].keys():
+                
+                if type(freq_adjust) == dict: #If freq_adjust not specified, set it to None
+                    cur_freq_adjust = freq_adjust[pa_key][freq_key]
+                else:
+                    cur_freq_adjust = None
+
+                if type(extern_calib) == dict:
+                    cur_extern_calib = extern_calib[pa_key][freq_key][0]
+                elif type(extern_calib) == float or type(extern_calib) == int:
+                    cur_extern_calib = extern_calib
+                else:
+                    cur_extern_calib = None
+
+                self.make_stack(pa = pa_key, freq = freq_key, pol=pol, plot = plot, verbose = verbose, weight_type = weight_type, time = 'night', weight_debug = weight_debug, 
+                                lightcurve = lightcurve, freq_adjust = cur_freq_adjust, extern_calib = cur_extern_calib, time_cut = time_cut)
+                self.make_stack(pa = pa_key, freq = freq_key, pol=pol, plot = plot, verbose = verbose, weight_type = weight_type, time = 'day', weight_debug = weight_debug,
+                                lightcurve = lightcurve, freq_adjust = cur_freq_adjust, extern_calib = cur_extern_calib, time_cut = time_cut)
+        if pol == 'T':
+            if weight_type == 1:
+                fname = "fluxes/{}_unweight_flux_dict.pk".format(self.name)
+            else:
+                fname = "fluxes/{}_{}_weight_flux_dict.pk".format(self.name, weight_type)
+            with open(directory+fname, 'wb') as f:
+                print('Flux dict written for ', self.name)
+                pk.dump(self.flux_dict, f)
+        else:
+            with open(directory+'fluxes/{}_pol_{}_dict.pk'.format(self.name, pol), 'wb') as f:
+                #print(f)
+                pk.dump(self.flux_dict, f)
+
+    def save_stack(self, directory):
+        aster_dict = {'flux_stack':self.flux_stack, 'fstack':self.fstack, 'kstack':self.kstack, 'flux_scale':self.flux_scale}
+        with open(directory+'{}_stamp.pk'.format(str(self.eph_table['targetname'][0]).replace(' ', '_').replace('(','').replace(')','')), 'wb') as f:
+            pk.dump(aster_dict, f)
+                
+    def plot_stack(self, directory = None, scale = None):
+        plt.imshow(self.flux_stack)
+        plt.xlabel('ra')
+        plt.ylabel('dec')
+        
+        plt.title('Plot of {} Stack'.format(self.eph_table['targetname'][0]))
+        if directory is not None:
+            plt.savefig(directory + '{}_stamp.pdf'.format(str(self.eph_table['targetname'][0]).replace(' ', '_').replace('(','').replace(')','')))
+        #plt.show()
+        
+##########################################################################################
+#                                   Diagnostic Tools                                     #
+##########################################################################################   
+
+    def diag_make_stack(self, pa, freq = 'f150', pol='T', restrict_time = False, weight_type=None, plot = False, verbose = False, weight_debug = False, time = 'night', lightcurve=False, freq_adjust = None, extern_calib = None, time_cut = None):
+        """
+        Version of make_stack which includes diagnostic tools. Does not save LCs to save place as make_stack
+
+        Atributes
+        ---------
+        pa : str
+            String specifying the array to stack on. Options: pa4, pa5, pa6
+        freq : str, default 'f150'
+            String specifying frequcny to stack on. Options: f090, f150, f220
+        """
         pol_dict = {'T':0, 'Q':1, 'U':2}
         pol = pol_dict[pol]
 
@@ -392,13 +650,11 @@ class minorplanet():
                 if flag:  
                     continue
             
-
             if restrict_time and (ctime0 < restrict_time[0] or restrict_time[1] < ctime0): continue #restrict to only within a certain time range
             hour = (ctime0/3600)%24
 
             if time == 'night' and (11<hour<23): continue
-            elif time == 'day' and (hour<11 or hour >23): continue
-            #else: print('Something wrong with your time: {} and split {}'.format(hour, time))
+            elif time == 'day' and (hour<11 or hour >23): continue 
 
             if verbose:
                 ts = int(ctime0)  
@@ -408,24 +664,8 @@ class minorplanet():
             adata = self.orbit(ctime0)
             ra_ast, dec_ast, delta_earth, delta_sun, ignore_ang = adata
             
-            if weight_type == 'flux':
-                cur_time = utils.ctime2djd(ctime0) 
-
-                self.sun.compute(cur_time)
-
-                alpha = compute_alpha(self.sun.ra, self.sun.dec, self.sun.earth_distance, ra_ast*np.pi/180, dec_ast*np.pi/180, delta_earth)
-                alpha *= (180/np.pi)
-
-                weight = 1/(delta_sun**(-2) * delta_earth**(-2) *10**(-0.004*alpha))
-                if verbose: print('Weight = ', weight)
-                
-                
-                
-            elif weight_type == 'invflux':
-                d_sun_0, d_earth_0 = self.semimajor,self.semimajor
-                weight = 1 / (d_sun_0**2 * d_earth_0**2/(delta_earth**2*delta_sun**2))
-                if verbose: print('Weight = ', weight)
-            elif weight_type == 'paper_weight': 
+               
+           if weight_type == 'paper_weight': 
            
                 cur_time = utils.ctime2djd(ctime0) 
                 
@@ -585,78 +825,7 @@ class minorplanet():
             debug_dict = {'sn':sns,'iso':isos, 'hour':hours, 'weights':weights, 'alphas':alphas, 'r_sun':r_suns, 'r_earth':r_earths, 'fluxes': fluxes}
             with open('/home/r/rbond/jorlo/dev/minorplanets/pks/{}_debug_{}_{}_{}.pk'.format(self.name, time, pa, freq), 'wb') as f: 
                 pk.dump(debug_dict, f)           
-        if lightcurve: 
-            lc_dict = {'flux': fluxes_lc, 'err':errs_lc, 'time':times_lc, 'F':Fs_lc, "rho":rho_lc, "kappa":kappa_lc}
-            if weight_type == 1:
-                name = '{}_unweighted_lc_{}_{}_{}'.format(self.name, time, pa, freq)
-            else:
-                cur_pol = [i for i in pol_dict if pol_dict[i]==pol] #Gets key from pol index
-                name = '{}_{}_{}_lc_{}_{}_{}'.format(pol, self.name, weight_type, time, pa, freq)
-            with open('/scratch/r/rbond/jorlo/actxminorplanets/sigurd/lightcurves/'+name+".pk", 'wb') as f:
-                pk.dump(lc_dict, f)
 
-            c1 = fits.Column(name = "Time", array = np.array(times_lc), format = "D", unit = "Unix Timestamp")
-            c2 = fits.Column(name = "Flux", array = np.array(fluxes_lc), format = "D", unit = "mJy")
-            c3 = fits.Column(name = "FluxUncertainty", array = np.array(errs_lc), format = "D", unit = "mJy")
-            c4 = fits.Column(name = "Weight", array = np.array(Fs_lc), format = "D", unit = "unitless")
-            #cols = fits.ColDefs([c1, c2, c3])
-            hdu = fits.BinTableHDU.from_columns([c1, c2, c3, c4])
-            
-            with open('/scratch/r/rbond/jorlo/actxminorplanets/sigurd/lightcurves/'+name+".fits", 'wb') as f: 
-                
-                hdu.writeto(f, overwrite = True)
-
-
-    def make_all_stacks(self, weight_type = 1, pol='T', directory = '/scratch/r/rbond/jorlo/actxminorplanets/sigurd/', plot = False, verbose = False, weight_debug = False, lightcurve = False, freq_adjust = None, extern_calib = None, time_cut = None):
-        for pa_key in self.map_dict['night'].keys(): 
-            for freq_key in self.map_dict['night'][pa_key].keys():
-                
-                if type(freq_adjust) == dict: #If freq_adjust not specified, set it to None
-                    cur_freq_adjust = freq_adjust[pa_key][freq_key]
-                else:
-                    cur_freq_adjust = None
-
-                if type(extern_calib) == dict:
-                    cur_extern_calib = extern_calib[pa_key][freq_key][0]
-                elif type(extern_calib) == float or type(extern_calib) == int:
-                    cur_extern_calib = extern_calib
-                else:
-                    cur_extern_calib = None
-
-                self.make_stack(pa = pa_key, freq = freq_key, pol=pol, plot = plot, verbose = verbose, weight_type = weight_type, time = 'night', weight_debug = weight_debug, 
-                                lightcurve = lightcurve, freq_adjust = cur_freq_adjust, extern_calib = cur_extern_calib, time_cut = time_cut)
-                self.make_stack(pa = pa_key, freq = freq_key, pol=pol, plot = plot, verbose = verbose, weight_type = weight_type, time = 'day', weight_debug = weight_debug,
-                                lightcurve = lightcurve, freq_adjust = cur_freq_adjust, extern_calib = cur_extern_calib, time_cut = time_cut)
-        if pol == 'T':
-            if weight_type == 1:
-                fname = "fluxes/{}_unweight_flux_dict.pk".format(self.name)
-            else:
-                fname = "fluxes/{}_{}_weight_flux_dict.pk".format(self.name, weight_type)
-            with open(directory+fname, 'wb') as f:
-                print('Flux dict written for ', self.name)
-                pk.dump(self.flux_dict, f)
-        else:
-            with open(directory+'fluxes/{}_pol_{}_dict.pk'.format(self.name, pol), 'wb') as f:
-                #print(f)
-                pk.dump(self.flux_dict, f)
-
-    def save_stack(self, directory):
-        aster_dict = {'flux_stack':self.flux_stack, 'fstack':self.fstack, 'kstack':self.kstack, 'flux_scale':self.flux_scale}
-        with open(directory+'{}_stamp.pk'.format(str(self.eph_table['targetname'][0]).replace(' ', '_').replace('(','').replace(')','')), 'wb') as f:
-            pk.dump(aster_dict, f)
-            
-    
-            
-    def plot_stack(self, directory = None, scale = None):
-        plt.imshow(self.flux_stack)
-        plt.xlabel('ra')
-        plt.ylabel('dec')
-        
-        plt.title('Plot of {} Stack'.format(self.eph_table['targetname'][0]))
-        if directory is not None:
-            plt.savefig(directory + '{}_stamp.pdf'.format(str(self.eph_table['targetname'][0]).replace(' ', '_').replace('(','').replace(')','')))
-        #plt.show()
-        
     def dif_pa4_pa5(self, weight_type = None, time = 'night', pol = 'T', verbose = False):
         pol_dict = {'T':0, 'Q':1, 'U':2}
         pol = pol_dict[pol]
