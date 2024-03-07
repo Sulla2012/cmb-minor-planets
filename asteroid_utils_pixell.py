@@ -411,7 +411,7 @@ class minorplanet():
             adata = self.orbit(ctime0)
             ra_ast, dec_ast, delta_earth, delta_sun, ignore_ang = adata
             
-           if weight_type == 'paper_weight': 
+            if weight_type == 'paper_weight': 
            
                 cur_time = utils.ctime2djd(ctime0) 
                 
@@ -665,7 +665,7 @@ class minorplanet():
             ra_ast, dec_ast, delta_earth, delta_sun, ignore_ang = adata
             
                
-           if weight_type == 'paper_weight': 
+            if weight_type == 'paper_weight': 
            
                 cur_time = utils.ctime2djd(ctime0) 
                 
