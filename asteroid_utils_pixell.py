@@ -473,6 +473,9 @@ class minorplanet():
             rho_lc.append(rho[pol, :, :].at([0,0]))
             kappa_lc.append(kappa[pol, :, :].at([0,0]))
 
+            hdu = fits.PrimaryHDU(flux_map)
+            hdu.writeto(path + '{}_{}_{}_{}.fits'.format(int((ctime0/3600)%24), pa, freq, int(ctime0)))
+
         try: 
             stack = (rho_stack/kappa_stack) #/ (kappa_stack/kappa_weight)
         except ZeroDivisionError:
