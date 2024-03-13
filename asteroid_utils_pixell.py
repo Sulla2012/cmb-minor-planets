@@ -322,7 +322,7 @@ class minorplanet():
             plt.show()
         plt.close()
         
-    def make_stack(self, pa, freq, pol = 'T', restrict_time = False, weight_type = None, plot = False, verbose = False, weight_debug = False, time = 'night', lightcurve=False, freq_adjust = None, extern_calib = None, time_cut = None):
+    def make_stack(self, pa, freq, pol = 'T', restrict_time = False, weight_type = None, plot = False, verbose = False, weight_debug = False, time = 'night', lightcurve=False, freq_adjust = None, extern_calib = None, time_cut = None, save_fits):
         """
         Function which stacks asteroid in given array, frequency, and polarization
 
@@ -344,6 +344,8 @@ class minorplanet():
             Dictionary specifying an external source of flux calibration to be applied.
         time_cut : none | list[float]
             Cuts specific unix times from stack
+        save_fits : bool
+            If true, save all stamps as fits
         """
         pol_dict = {'T':0, 'Q':1, 'U':2}
         pol = pol_dict[pol]
@@ -473,8 +475,9 @@ class minorplanet():
             rho_lc.append(rho[pol, :, :].at([0,0]))
             kappa_lc.append(kappa[pol, :, :].at([0,0]))
 
-            hdu = fits.PrimaryHDU(flux_map)
-            hdu.writeto(path + '{}_{}_{}_{}.fits'.format(int((ctime0/3600)%24), pa, freq, int(ctime0)))
+            if save_fits:
+                hdu = fits.PrimaryHDU(flux_map)
+                hdu.writeto(path + '{}_{}_{}_{}.fits'.format(int((ctime0/3600)%24), pa, freq, int(ctime0)))
 
         try: 
             stack = (rho_stack/kappa_stack) #/ (kappa_stack/kappa_weight)
