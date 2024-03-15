@@ -46,7 +46,63 @@ def get_desig(id_num):
         semimajor = df['semimajor'][id_num]
     return desig, name, semimajor
 
+def in_box(box, point): #checks if points are inside box or not
+        box   = np.asarray(box)
+        point = np.asarray(point)
+        point[1] = utils.rewind(point[1], box[0,1])
+        # This assumes reverse RA axis in box
+        return point[0] > box[0,0] and point[0] < box[1,0] and point[1] > box[1,1] and point[1] < box[0,1]
 
+def make_box(point, rad): #making box
+        box     = np.array([point - rad, point + rad])
+        box[:,1]= box[::-1,1] # reverse ra
+        return box
+
+def filter_map(map, lknee=3000, alpha=-3, beam=0): #filtering map somehow (FFT)
+        fmap  = enmap.fft(map)
+        l     = np.maximum(0.5, map.modlmap())
+        filter= (1+(l/lknee)**alpha)**-1
+        if beam:
+                filter *= np.exp(-0.5*l**2*beam**2)
+        fmap *= filter
+        omap  = enmap.ifft(fmap).real
+        return omap
+
+def calc_obs_ctime(orbit, tmap, ctime0):
+        def calc_chisq(x):
+                ctime = ctime0+x
+                try:
+                        adata = orbit(ctime)
+                        mtime = tmap.at(adata[1::-1], order=1)
+                except ValueError:
+                        mtime = 0
+                return (mtime-ctime)**2
+        ctime = optimize.fmin_powell(calc_chisq, 0, disp=False)+ctime0
+        err   = calc_chisq(ctime-ctime0)**0.5
+        return ctime, err
+
+def calc_sidereal_time(lon, ctime):
+        obs      = ephem.Observer()
+        obs.lon  = lon
+        obs.date = utils.ctime2djd(ctime)
+        return obs.sidereal_time()
+
+def geocentric_to_site(pos, dist, site_pos, site_alt, ctime):
+        """Given a geocentric position pos[{ra,dec},...] and distance dist [...]
+        in m, transform it to coordinates relative to the given site, with
+        position pos[{lon,lat}] and altitude alt_site in m, returns the
+        position observed from the site, as well as the distance from the site in m"""
+        # This function isn't properly debugged. I should check the sign of
+        # the sidereal time shift. But anyway, this function is a 0.2 arcmin
+        # effect in the asteroid belt.
+        sidtime    = calc_sidereal_time(site_pos[0], ctime)
+        site_radec = np.array([site_pos[0]+sidtime*15*utils.degree,site_pos[1]])
+        vec_site   = utils.ang2rect(site_radec)*(utils.R_earth + site_alt)
+        vec_obj    = utils.ang2rect(pos)*dist
+        vec_rel  = vec_obj-vec_site
+        dist_rel = np.sum(vec_rel**2,0)**0.5
+        pos_rel  = utils.rect2ang(vec_rel)
+        return pos_rel, dist_rel
   
 def get_index(name):
     '''
@@ -322,7 +378,7 @@ class minorplanet():
             plt.show()
         plt.close()
         
-    def make_stack(self, pa, freq, pol = 'T', restrict_time = False, weight_type = None, plot = False, verbose = False, weight_debug = False, time = 'night', lightcurve=False, freq_adjust = None, extern_calib = None, time_cut = None, save_fits):
+    def make_stack(self, pa, freq, pol = 'T', restrict_time = False, weight_type = None, plot = False, verbose = False, weight_debug = False, time = 'night', lightcurve=False, freq_adjust = None, extern_calib = None, time_cut = None, save_fits = False):
         """
         Function which stacks asteroid in given array, frequency, and polarization
 
