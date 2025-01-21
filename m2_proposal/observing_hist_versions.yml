@@ -1,0 +1,12 @@
+name: observing
+channels:
+  - defaults
+dependencies:
+  - python=3.9.2
+  - astropy=6.0.0
+  - matplotlib==3.4.1
+  - pandas=1.2.5
+  - astroplan=0.9.1
+  - scipy=1.7.1
+  - pip:
+    - jplephem==2.15
